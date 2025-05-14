@@ -189,6 +189,7 @@ static void remount(const std::vector<MountInfo>& mounts) {
 			if (mntflags & MountFlags::NOSYMFOLLOW) {
 				flags |= MS_NOSYMFOLLOW;
 			}
+			int res;
 			res = ::mount(nullptr, "/data", nullptr, flags, (std::string("errors=") + *errors).c_str());
 			break;
 		}
@@ -320,7 +321,6 @@ private:
 
                 // Sanitize FDs after companion communication and potential mount changes
                 for (auto &[fdi, shouldDetach] : fdSanitizeList) {
-							fdi->fd, fdi->file_path.c_str(), fdi->is_sock, shouldDetach);
 					fdi->ReopenOrDetach([
 						fd = fdi->fd,
 						path = fdi->file_path // Capture path by value for lambda
