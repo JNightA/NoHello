@@ -16,7 +16,6 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <fcntl.h>
-#include <android/log.h>
 #include <filesystem>
 #include <ranges>
 #include <vector>
@@ -30,9 +29,7 @@
 #include <sys/mount.h>
 #include <endian.h>
 #include <thread>
-#include "log.h"
 #include "PropertyManager.cpp"
-#include "external/emoji.h"
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
@@ -92,7 +89,6 @@ static std::pair<bool, bool> anomaly(const std::unique_ptr<FileDescriptorInfo> f
 				socket_name.find("apatchd") != std::string::npos || // For APatch daemon, common pattern
 				socket_name.find("apd") != std::string::npos      // APatch daemon
 					) {
-				LOGD("Marking sensitive socket FD %d (%s) for sanitization.", fdi->fd, socket_name.c_str());
 				return {true, true};
 			}
 		}
@@ -106,7 +102,6 @@ static std::pair<bool, bool> anomaly(const std::unique_ptr<FileDescriptorInfo> f
 				fdi->file_path.find("magisk") != std::string::npos ||
 				fdi->file_path.find("kernelsu") != std::string::npos ||
 				fdi->file_path.find("apatch") != std::string::npos) {
-				LOGD("Marking sensitive file FD %d (%s) for sanitization.", fdi->fd, fdi->file_path.c_str());
 				return {true, true};
 			}
 		}
@@ -157,9 +152,6 @@ static void unmount(const std::vector<MountInfo>& mounts) {
 			errno = 0;
 			int res;
 			if ((res = umount2(mount.getMountPoint().c_str(), MNT_DETACH)) == 0)
-				LOGD("umount2(\"%s\", MNT_DETACH): returned (0): 0 (Success)", mount.getMountPoint().c_str());
-			else
-				LOGE("umount2(\"%s\", MNT_DETACH): returned %d: %d (%s)", mount.getMountPoint().c_str(), res, errno, strerror(errno));
 		}
 	}
 }
@@ -197,11 +189,6 @@ static void remount(const std::vector<MountInfo>& mounts) {
 			if (mntflags & MountFlags::NOSYMFOLLOW) {
 				flags |= MS_NOSYMFOLLOW;
 			}
-			int res;
-			if ((res = ::mount(nullptr, "/data", nullptr, flags, (std::string("errors=") + *errors).c_str())) == 0)
-				LOGD("mount(nullptr, \"/data\", nullptr, 0x%x, \"errors=%s\"): returned 0: 0 (Success)", flags, errors->c_str());
-			else
-				LOGW("mount(NULL, \"/data\", NULL, 0x%x, \"errors=%s\"): returned %d: %d (%s)", flags, errors->c_str(), res, errno, strerror(errno));
 			break;
 		}
 	}
@@ -271,11 +258,8 @@ private:
 			if (di) {
 				std::tie(dev, inode) = *di;
 			} else {
-				LOGW("$[zygisk::PreSpecialize] devino[dl_iterate_phdr]: Failed to get device & inode for libandroid_runtime.so");
-				LOGI("$[zygisk::PreSpecialize] Fallback to use `/proc/self/maps`");
 				std::tie(dev, inode) = devinobymap("libandroid_runtime.so");
 				if (!dev && !inode) {
-					LOGE("$[zygisk::PreSpecialize] devino[/proc/self/maps]: Failed to get device & inode for libandroid_runtime.so");
 					close(cfd);
 					api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
 					return;
@@ -289,13 +273,11 @@ private:
 				nocb = []() {};
                 std::vector<std::pair<std::unique_ptr<FileDescriptorInfo>, bool>> fdSanitizeList; // bool is shouldDetach
                 auto fds = GetOpenFds([](const std::string &error){
-                    LOGE("#[zygisk::PreSpecialize] GetOpenFds: %s", error.c_str());
                 });
                 if (fds) {
                     for (auto &fd : *fds) {
                         if (fd == cfd) continue; // Skip companion FD itself
                         auto fdi = FileDescriptorInfo::CreateFromFd(fd, [fd](const std::string &error){
-                            LOGE("#[zygisk::PreSpecialize] CreateFromFd(%d): %s", fd, error.c_str());
                         });
 						if (!fdi)
 							continue;
@@ -308,24 +290,20 @@ private:
 
 				int res = ar_unshare(CLONE_NEWNS);
 				if (res != 0) {
-					LOGE("#[zygisk::PreSpecialize] ar_unshare: %s", strerror(errno));
 					// There's nothing we can do except returning
 					close(cfd);
 					return;
 				}
 				res = mount("rootfs", "/", nullptr, MS_SLAVE | MS_REC, nullptr);
 				if (res != 0) {
-					LOGE("#[zygisk::PreSpecialize] mount(rootfs, \"/\", nullptr, MS_SLAVE | MS_REC, nullptr): returned %d: %d (%s)", res, errno, strerror(errno));
                     // There's nothing we can do except returning
 					close(cfd);
 					return;
 				}
 
 				if (write(cfd, &pid, sizeof(pid)) != sizeof(pid)) {
-					LOGE("#[zygisk::PreSpecialize] write: [-> pid]: %s", strerror(errno));
 					res = EXIT_FAILURE; // Fallback to unmount from zygote
                 } else if (read(cfd, &res, sizeof(res)) != sizeof(res)) {
-					LOGE("#[zygisk::PreSpecialize] read: [<- status]: %s", strerror(errno));
 					res = EXIT_FAILURE; // Fallback to unmount from zygote
 				}
 
@@ -336,19 +314,16 @@ private:
 					mount(nullptr, "/", nullptr, MS_SHARED | MS_REC, nullptr);
 					return;
 				} else if (res == EXIT_FAILURE) {
-					LOGW("#[zygisk::PreSpecialize]: Companion failed, fallback to unmount in zygote process");
 					unmount(getMountInfo()); // Unmount in current (zygote) namespace as fallback
 				}
 
                 // Sanitize FDs after companion communication and potential mount changes
                 for (auto &[fdi, shouldDetach] : fdSanitizeList) {
-					LOGD("#[zygisk::PreSpecialize]: Sanitizing FD %d (path: %s, socket: %d), detach: %d",
 							fdi->fd, fdi->file_path.c_str(), fdi->is_sock, shouldDetach);
 					fdi->ReopenOrDetach([
 						fd = fdi->fd,
 						path = fdi->file_path // Capture path by value for lambda
 					](const std::string &error){
-						LOGE("#[zygisk::PreSpecialize] Sanitize FD %d (%s): %s", fd, path.c_str(), error.c_str());
 					}, shouldDetach);
                 }
 			};
@@ -381,7 +356,7 @@ static void NoRoot(int fd) {
 	pid_t pid = -1;
 	static unsigned int successRate = 0;
 	static const std::string description = [] {
-		std::ifstream f("/data/adb/modules/zygisk_nohello/description");
+		std::ifstream f("/data/adb/modules/hideroot/description");
 		// This file exists only after installing/updating the module
 		// It should have the default description
 		// Since this is static const it's only evaluated once per boot since companion won't exit
@@ -397,14 +372,13 @@ static void NoRoot(int fd) {
 	}();
 	int result;
 	if (read(fd, &pid, sizeof(pid)) != sizeof(pid)) {
-        LOGE("#[ps::Companion] Failed to read PID: %s", strerror(errno));
 		close(fd);
 		return;
 	}
-	PropertyManager pm("/data/adb/modules/zygisk_nohello/module.prop");
+	PropertyManager pm("/data/adb/modules/hideroot/module.prop");
 	if (!compatbility) {
 		result = MODULE_CONFLICT;
-		pm.setProp("description", "[" + emoji::emojize(":x: ") + "Incompatible environment] " + description);
+		pm.setProp("description", "[\U0000274C 不兼容的环境] " + description);
 		goto skip;
 	}
 	result = forkcall(
@@ -412,7 +386,6 @@ static void NoRoot(int fd) {
 		{
 			int res = switchnsto(pid);
 			if (!res) { // switchnsto returns true on success (0 from setns)
-				LOGE("#[ps::Companion] setns failed for PID %d: %s", pid, strerror(errno));
 				return EXIT_FAILURE;
 			}
 			auto mounts = getMountInfo();
@@ -423,12 +396,11 @@ static void NoRoot(int fd) {
 	);
 	if (result == EXIT_SUCCESS) {
 		successRate++;
-		pm.setProp("description", "[" + emoji::emojize(":yum: ") + "Nohello unmounted " +
+		pm.setProp("description", "[\U0001F60B HideRoot 工作中 " +
 								  std::to_string(successRate) + " time(s)] " + description);
 	}
 	skip:
 	if (write(fd, &result, sizeof(result)) != sizeof(result)) {
-		LOGE("#[ps::Companion] Failed to write result: %s", strerror(errno));
 	}
 	close(fd);
 }
