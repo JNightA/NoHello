@@ -151,7 +151,7 @@ static void unmount(const std::vector<MountInfo>& mounts) {
         	if (anomaly(mrs, mount)) {
 			errno = 0;
 			int res;
-			res = umount2(mount.getMountPoint().c_str(), MNT_DETACH)
+			res = umount2(mount.getMountPoint().c_str(), MNT_DETACH);
 		}
 	}
 }
@@ -189,7 +189,7 @@ static void remount(const std::vector<MountInfo>& mounts) {
 			if (mntflags & MountFlags::NOSYMFOLLOW) {
 				flags |= MS_NOSYMFOLLOW;
 			}
-			res = ::mount(nullptr, "/data", nullptr, flags, (std::string("errors=") + *errors).c_str()) 
+			res = ::mount(nullptr, "/data", nullptr, flags, (std::string("errors=") + *errors).c_str());
 			break;
 		}
 	}
