@@ -31,7 +31,6 @@
 #include <thread>
 #include "PropertyManager.cpp"
 #include "MountRuleParser.cpp"
-#include "external/emoji.h"
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
